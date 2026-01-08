@@ -1,0 +1,15 @@
+init memory 1024
+strategy first
+alloc 100
+alloc 200
+alloc 300
+show
+free 2
+strategy best
+alloc 50
+show
+strategy worst
+alloc 50
+show
+stats
+exit

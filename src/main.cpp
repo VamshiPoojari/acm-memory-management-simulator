@@ -56,7 +56,7 @@ ReplacementPolicy currentPolicy = ReplacementPolicy::FIFO;
 AllocationStrategy currentStrategy = AllocationStrategy::FIRST_FIT;
 int nextAllocId = 1;
 const int PAGE_SIZE = 64;      // bytes
-const int NUM_PAGES = 16;      // virtual pages
+const int NUM_PAGES = 32;      // virtual pages
 const int NUM_FRAMES = 16;     // physical frames
 
 // Global
@@ -71,10 +71,14 @@ const int L1_LINES = 8;
 const int L2_LINES = 16;
 
 bool allocateMemory(std::vector<MemoryBlock>& memory, int requestSize) {
+    if (requestSize <= 0) return false;
+    if (memory.empty()) {
+        std::cout << "Error: Memory not initialized. Use 'init memory <size>'.\n";
+        return false;
+    }
+
     int chosenIndex = -1;
     totalAllocRequests++;
-    successfulAllocs++;
-    failedAllocs++;
 
     for (size_t i = 0; i < memory.size(); i++) {
         if (!memory[i].free || memory[i].size < requestSize)
@@ -96,9 +100,12 @@ bool allocateMemory(std::vector<MemoryBlock>& memory, int requestSize) {
         }
     }
 
-    if (chosenIndex == -1)
+    if (chosenIndex == -1) {
+        failedAllocs++;
         return false;
+    }
 
+    successfulAllocs++;
     MemoryBlock allocated = {
         memory[chosenIndex].start,
         requestSize,
@@ -174,6 +181,7 @@ bool translateAddress(
     int virtualAddress,
     std::vector<PageTableEntry>& pageTable,
     std::vector<TLBEntry>& tlb,
+    std::unordered_map<int, int>& lastUsed,
     int& physicalAddress,
     int& tlbHits,
     int& tlbMisses
@@ -205,6 +213,7 @@ bool translateAddress(
 
     frame = pageTable[pageNumber].frameNumber;
     updateTLB(pageNumber, frame, tlb);
+    lastUsed[pageNumber] = timeCounter++;
     physicalAddress = frame * PAGE_SIZE + offset;
     return true;
 }
@@ -249,23 +258,36 @@ int evictPage(std::vector<PageTableEntry>& pageTable,
     int victimPage = -1;
 
     if (currentPolicy == ReplacementPolicy::FIFO) {
-        victimPage = fifoQueue.front();
-        fifoQueue.pop();
+        while (!fifoQueue.empty()) {
+            victimPage = fifoQueue.front();
+            fifoQueue.pop();
+            if (pageTable[victimPage].valid) break;
+        }
     } else {
         int oldestTime = INT_MAX;
-        for (auto& entry : lastUsed) {
-            if (entry.second < oldestTime) {
-                oldestTime = entry.second;
-                victimPage = entry.first;
+        for (auto const& [page, time] : lastUsed) {
+            if (pageTable[page].valid && time < oldestTime) {
+                oldestTime = time;
+                victimPage = page;
             }
         }
-        lastUsed.erase(victimPage);
+    }
+
+    if (victimPage == -1 || !pageTable[victimPage].valid) {
+        // Fallback: just find any valid page
+        for (int i = 0; i < NUM_PAGES; i++) {
+            if (pageTable[i].valid) {
+                victimPage = i;
+                break;
+            }
+        }
     }
 
     int frame = pageTable[victimPage].frameNumber;
     pageTable[victimPage].valid = false;
     pageTable[victimPage].frameNumber = -1;
     frameUsed[frame] = false;
+    lastUsed.erase(victimPage);
 
     std::cout << "Evicted page " << victimPage << ".\n";
     return frame;
@@ -400,12 +422,6 @@ int main() {
     const int TLB_SIZE = 4;
     std::vector<TLBEntry> tlb(TLB_SIZE, {-1, -1, false});
 
-    const int CACHE_LINES = 8;
-    std::vector<CacheLine> cache(CACHE_LINES, {-1, false});
-
-    int cacheHits = 0;
-    int cacheMisses = 0;
-
     int tlbHits = 0;
     int tlbMisses = 0;
 
@@ -449,7 +465,7 @@ int main() {
         else if (command.empty()) {
             continue;
         }
-        else if (command == "dump memory") {
+        else if (command == "dump memory" || command == "show") {
             dumpMemory(memory);
         }
         else if (command.rfind("init memory", 0) == 0) {
@@ -488,7 +504,7 @@ int main() {
             }
 
             int paddr;
-            if (translateAddress(vaddr, pageTable, tlb, paddr, tlbHits, tlbMisses)) {
+            if (translateAddress(vaddr, pageTable, tlb, lastUsed, paddr, tlbHits, tlbMisses)) {
                 accessMemoryHierarchy(paddr, L1, L2);
 
                 std::cout << "Virtual Address " << vaddr

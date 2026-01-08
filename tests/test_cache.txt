@@ -1,0 +1,9 @@
+init memory 1024
+load 0
+load 1
+translate 10
+translate 10
+translate 70
+translate 10
+stats
+exit

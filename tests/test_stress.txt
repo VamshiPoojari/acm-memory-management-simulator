@@ -1,0 +1,97 @@
+# --- STRESS TEST: FRAGMENTATION ---
+init memory 1024
+strategy first
+# Fill memory with 64-byte blocks
+alloc 64
+alloc 64
+alloc 64
+alloc 64
+alloc 64
+alloc 64
+alloc 64
+alloc 64
+alloc 64
+alloc 64
+alloc 64
+alloc 64
+alloc 64
+alloc 64
+alloc 64
+alloc 64
+# Memory is now 16 * 64 = 1024 (Full)
+show
+# Free every second block to create holes
+free 2
+free 4
+free 6
+free 8
+free 10
+free 12
+free 14
+free 16
+show
+# Now we have 8 holes of 64 bytes each, but no contiguous 100 bytes.
+# Try to allocate 100 bytes (should fail)
+alloc 100
+# Try Best Fit for 32 bytes (should pick one of the 64-byte holes)
+strategy best
+alloc 32
+show
+stats
+
+# --- STRESS TEST: PAGE THRASHING ---
+# Reset memory for paging
+init memory 1024
+policy fifo
+# Load 16 pages (fills all frames)
+load 0
+load 1
+load 2
+load 3
+load 4
+load 5
+load 6
+load 7
+load 8
+load 9
+load 10
+load 11
+load 12
+load 13
+load 14
+load 15
+# Access a new page (causes eviction of page 0)
+load 16
+# Access page 0 again (causes eviction of page 1)
+load 0
+# Switch to LRU and test temporal locality
+policy lru
+load 1
+load 2
+# Access page 1 again (makes it most recent)
+translate 64
+# Load many pages to trigger eviction
+load 17
+load 18
+load 19
+# Page 1 should still be in memory because it was recently translated
+translate 64
+stats
+
+# --- STRESS TEST: CACHE CONFLICTS ---
+# L1 has 8 lines. Block size 64.
+# Addr 0 -> Line 0
+# Addr 512 (8*64) -> Line 0
+# Addr 1024 (16*64) -> Line 0
+load 0
+load 8
+load 16
+# Repeatedly alternate between addresses that map to the same L1 line
+translate 0
+translate 512
+translate 0
+translate 512
+translate 1024
+translate 0
+stats
+exit
