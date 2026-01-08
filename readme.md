@@ -1,3 +1,5 @@
+LINK TO THE VIDEO OF THE PROJECT: https://www.youtube.com/watch?v=17XCUx5z0oE
+
 ## Memory Access Pipeline
 
 The simulator models the complete operating system memory access pipeline.
