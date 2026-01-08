@@ -1,9 +1,23 @@
 init memory 1024
+
+# Load two pages
 load 0
 load 1
+
+# First access → page fault + cache miss
 translate 10
+
+# Repeated access → cache hit
 translate 10
+
+# Different address, same page → cache behavior
+translate 20
+
+# New page → page fault
 translate 70
+
+# Repeat again → cache hit
 translate 10
+
 stats
 exit

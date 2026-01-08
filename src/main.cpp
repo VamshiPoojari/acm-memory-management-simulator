@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <climits>
 #include <iomanip>
+#include <unordered_set>
 
 struct MemoryBlock {
     int start;
@@ -61,6 +62,11 @@ const int NUM_FRAMES = 16;     // physical frames
 
 // Global
 int timeCounter = 0;
+
+int pageFaults = 0;
+int pageHits = 0;
+
+std::unordered_set<int> diskPages;
 
 int totalAllocRequests = 0;
 int successfulAllocs = 0;
@@ -176,11 +182,25 @@ void dumpMemory(const std::vector<MemoryBlock>& memory) {
 
     std::cout << std::dec << std::endl;
 }
+int evictPage(std::vector<PageTableEntry>& pageTable,
+              std::vector<bool>& frameUsed,
+              std::queue<int>& fifoQueue,
+              std::unordered_map<int, int>& lastUsed);
+
+bool mapPage(
+    int pageNumber,
+    std::vector<PageTableEntry>& pageTable,
+    std::vector<bool>& frameUsed,
+    std::queue<int>& fifoQueue,
+    std::unordered_map<int, int>& lastUsed
+);
 
 bool translateAddress(
     int virtualAddress,
     std::vector<PageTableEntry>& pageTable,
     std::vector<TLBEntry>& tlb,
+    std::vector<bool>& frameUsed,
+    std::queue<int>& fifoQueue,
     std::unordered_map<int, int>& lastUsed,
     int& physicalAddress,
     int& tlbHits,
@@ -199,6 +219,7 @@ bool translateAddress(
     // TLB lookup
     if (tlbLookup(pageNumber, tlb, frame)) {
         tlbHits++;
+        pageHits++;
         physicalAddress = frame * PAGE_SIZE + offset;
         return true;
     }
@@ -207,21 +228,27 @@ bool translateAddress(
 
     // Page table lookup
     if (!pageTable[pageNumber].valid) {
-        std::cout << "Page fault at page " << pageNumber << ".\n";
-        return false;
+        pageFaults++;
+        std::cout << "Page fault at page " << pageNumber << ". Loading page...\n";
+
+        if (diskPages.count(pageNumber)) {
+            diskPages.erase(pageNumber);
+        }
+
+        if (!mapPage(pageNumber, pageTable, frameUsed, fifoQueue, lastUsed)) {
+            std::cout << "Failed to load page.\n";
+            return false;
+        }
+
     }
 
+    pageHits++;
     frame = pageTable[pageNumber].frameNumber;
     updateTLB(pageNumber, frame, tlb);
     lastUsed[pageNumber] = timeCounter++;
     physicalAddress = frame * PAGE_SIZE + offset;
     return true;
 }
-
-int evictPage(std::vector<PageTableEntry>& pageTable,
-              std::vector<bool>& frameUsed,
-              std::queue<int>& fifoQueue,
-              std::unordered_map<int, int>& lastUsed);
 
 bool mapPage(int pageNumber,
              std::vector<PageTableEntry>& pageTable,
@@ -249,6 +276,7 @@ bool mapPage(int pageNumber,
     lastUsed[pageNumber] = timeCounter++;
     return true;
 }
+
 
 int evictPage(std::vector<PageTableEntry>& pageTable,
               std::vector<bool>& frameUsed,
@@ -289,8 +317,10 @@ int evictPage(std::vector<PageTableEntry>& pageTable,
     frameUsed[frame] = false;
     lastUsed.erase(victimPage);
 
-    std::cout << "Evicted page " << victimPage << ".\n";
+    diskPages.insert(victimPage);
+    std::cout << "Evicted page " << victimPage << " -> moved to disk.\n";
     return frame;
+
 }
 
 bool tlbLookup(int pageNumber,
@@ -414,6 +444,12 @@ void accessMemoryHierarchy(int physicalAddress,
     accessCache(L1, physicalAddress);
 }
 
+double hitRatio(int hits, int misses) {
+    int total = hits + misses;
+    if (total == 0) return 0.0;
+    return (double)hits / total * 100.0;
+}
+
 int main() {
     std::cout << "Memory Management Simulator (Skeleton)\n";
     std::cout << "Type 'help' to see commands.\n";
@@ -436,6 +472,7 @@ int main() {
     for (int i = 0; i < NUM_PAGES; i++) {
         pageTable[i].valid = false;
         pageTable[i].frameNumber = -1;
+        diskPages.insert(i);
     }
     Cache L1(L1_LINES);
     Cache L2(L2_LINES);
@@ -504,7 +541,7 @@ int main() {
             }
 
             int paddr;
-            if (translateAddress(vaddr, pageTable, tlb, lastUsed, paddr, tlbHits, tlbMisses)) {
+            if (translateAddress(vaddr, pageTable, tlb,frameUsed, fifoQueue, lastUsed, paddr, tlbHits, tlbMisses)) {
                 accessMemoryHierarchy(paddr, L1, L2);
 
                 std::cout << "Virtual Address " << vaddr
@@ -559,10 +596,22 @@ int main() {
                     << failedAllocs << "\n\n";
             
             std::cout << "\n--- Cache Statistics ---\n";
+
             std::cout << "L1 Hits: " << L1.hits << "\n";
             std::cout << "L1 Misses: " << L1.misses << "\n";
+            std::cout << "L1 Hit Ratio: "
+                    << std::fixed << std::setprecision(2)
+                    << hitRatio(L1.hits, L1.misses) << "%\n\n";
+
             std::cout << "L2 Hits: " << L2.hits << "\n";
             std::cout << "L2 Misses: " << L2.misses << "\n";
+            std::cout << "L2 Hit Ratio: "
+                    << std::fixed << std::setprecision(2)
+                    << hitRatio(L2.hits, L2.misses) << "%\n";
+
+            std::cout << "\n--- Virtual Memory Statistics ---\n";
+            std::cout << "Page Hits: " << pageHits << "\n";
+            std::cout << "Page Faults: " << pageFaults << "\n";
 
         }
 

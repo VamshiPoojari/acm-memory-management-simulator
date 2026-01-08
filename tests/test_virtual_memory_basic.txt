@@ -1,0 +1,10 @@
+init memory 1024
+
+translate 0
+translate 64
+translate 128
+translate 0
+translate 64
+
+stats
+exit
